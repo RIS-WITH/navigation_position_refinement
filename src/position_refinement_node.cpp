@@ -9,12 +9,16 @@
 
 struct Params_t
 {
+    double gain_angular_P;
+    double gain_angular_I;
     double gain_P;
     double gain_I;
     double distance_tolerance;
     double angular_tolerance;
     double max_integral;
+    double max_angular_integral;
     double max_speed;
+    double max_angular_speed;
     ros::Duration controler_period;
 };
 
@@ -54,7 +58,7 @@ public:
         }
         std::vector errors = getErrors(poseWanted);
 
-        double cmd = 0.0, integral;
+        double cmd = 0.0, integral,cmd_angle = 0.0, integral_angle;
         ros::Time lastControl = ros::Time::now();
         ros::Time now = lastControl;
         ros::Time actionStart = ros::Time::now();
@@ -65,11 +69,14 @@ public:
         feedback.distance_to_goal = errors[0];
         feedback.angular_to_goal = errors[1];
         position_refinement_ActionServer_.publishFeedback(feedback);
-        while (errors[0] > params_.distance_tolerance && errors[1] > params_.angular_tolerance && ros::ok())
+        bool stop_condition = false;
+        while ( !stop_condition && ros::ok())
         {
             std::vector errors = getErrors(poseWanted);
             feedback.distance_to_goal = errors[0];
             feedback.angular_to_goal = errors[1];
+            
+
             position_refinement_ActionServer_.publishFeedback(feedback);
             now = ros::Time::now();
             if (position_refinement_ActionServer_.isPreemptRequested())
@@ -82,36 +89,49 @@ public:
                 position_refinement_ActionServer_.setPreempted(asResult);
                 return;
             }
+            integral = std::max(-params_.max_integral,
+                                std::min(params_.max_integral, integral + errors[0] * (now - lastControl).toSec()));
+            cmd = std::max(-params_.max_speed,
+                            std::min(params_.max_speed, params_.gain_P * errors[0] + params_.gain_I * integral));
+            auto val = tfBuffer_.transform(poseWanted, "base_footprint");
+            double angle = std::atan2(val.pose.position.y,val.pose.position.x);
+            
+            integral_angle = std::max(-params_.max_angular_integral,
+                                std::min(params_.max_angular_integral, integral_angle + errors[1] * (now - lastControl).toSec()));
+            double angular_factor = 1;
+            cmd_angle = std::max(-params_.max_angular_speed,
+                            std::min(params_.max_angular_speed, params_.gain_angular_P * errors[1] + params_.gain_angular_I * integral_angle));
+
+
             if (errors[0] > params_.distance_tolerance)
             {
-                integral = std::max(-params_.max_integral,
-                                    std::min(params_.max_integral, integral + errors[0] * (now - lastControl).toSec()));
-                cmd = std::max(-params_.max_speed,
-                               std::min(params_.max_speed, params_.gain_P * errors[0] + params_.gain_I * integral));
-                double angle = errors[1];
                 cmdVel.linear.x = cmd * std::cos(angle);
                 cmdVel.linear.y = cmd * std::sin(angle);
-                cmdVelPub_.publish(cmdVel);
-                lastControl = now;
-                params_.controler_period.sleep();
-            } else
-            {
-                integral = std::max(-params_.max_integral,
-                                    std::min(params_.max_integral, integral + errors[1] * (now - lastControl).toSec()));
-                cmd = std::max(-params_.max_speed,
-                               std::min(params_.max_speed, params_.gain_P * errors[1] + params_.gain_I * integral));
-//                double angle = errors[1];
-//                cmdVel.linear.x = cmd * std::cos(angle);
-//                cmdVel.linear.y = cmd * std::sin(angle);
-                cmdVel.angular.z = cmd;
-                cmdVelPub_.publish(cmdVel);
-                lastControl = now;
-                params_.controler_period.sleep();
             }
+            else
+            {
+                cmdVel.linear.x = 0.;
+                cmdVel.linear.y = 0.;
+            }
+            if (std::abs(errors[1]) > params_.angular_tolerance)
+            {
+                cmdVel.angular.z = cmd_angle*angular_factor;
+            }
+                
+
+            
+            
+            cmdVelPub_.publish(cmdVel);
+            lastControl = now;
+            params_.controler_period.sleep();
+            
+            stop_condition = ((errors[0] < params_.distance_tolerance) && (std::abs(errors[1]) < params_.angular_tolerance));
+            std::cout << "stop_condition : " << stop_condition << std::endl;
 
         }
         cmdVel.linear.x = 0.0;
         cmdVel.linear.y = 0.0;
+        cmdVel.angular.z = 0.0;
         asResult.action_end = ros::Time::now();
         for (unsigned int j = 0; j < 2; j++)
         {  // TODO (guilhembn): does not work with morse otherwise, check on real robot
@@ -134,8 +154,8 @@ public:
         double error = transform.getOrigin().length();
         double roll, pitch, yaw;
         transform.getBasis().getRPY(roll, pitch, yaw);
-        double angular_distance = yaw;
-        std::vector<double> vec{error, angular_distance};
+        std::cout << "current distance error : " << error << " angular error : " << yaw << std::endl;
+        std::vector<double> vec{error, yaw};
         return vec;
     }
 
@@ -160,10 +180,15 @@ int main(int argc, char** argv)
     params.insert(Parameter("gain P", {"-p", "--gain_p"}, {"0.1"}));
     params.insert(Parameter("gain I", {"-i", "--gain_i"}, {"0.05"}));
 
+    params.insert(Parameter("gain angulaire P", {"-ap", "--gain_angulaire_p"}, {"100"}));
+    params.insert(Parameter("gain angulaire I", {"-ai", "--gain_angulaire_i"}, {"1"}));
+
     params.insert(Parameter("angular tolerance", {"-a", "--angular_tolerance"}, {"0.034"}));
     params.insert(Parameter("distance tolerance", {"-d", "--distance_tolerance"}, {"0.2"}));
 
     params.insert(Parameter("max speed", {"-ms", "--max_speed"}, {"0.2"}));
+    params.insert(Parameter("max angular speed", {"-as", "--angular_max_speed"}, {"0.1"}));
+    params.insert(Parameter("max angular integral", {"-ami", "--angular_max_integral"}, {"5.0"}));
     params.insert(Parameter("max integral", {"-mi", "--max_integral"}, {"5.0"}));
     params.insert(Parameter("controller period", {"-cp", "--controller_period"}, {"0.1"}));
 
@@ -173,10 +198,19 @@ int main(int argc, char** argv)
     Params_t parsed_params;
     parsed_params.gain_P = std::stod(params.at("gain P").getFirst());
     parsed_params.gain_I = std::stod(params.at("gain I").getFirst());
+
+    parsed_params.gain_angular_P = std::stod(params.at("gain angulaire P").getFirst());
+    parsed_params.gain_angular_P = std::stod(params.at("gain angulaire I").getFirst());
+
     parsed_params.angular_tolerance = std::stod(params.at("angular tolerance").getFirst());
     parsed_params.distance_tolerance = std::stod(params.at("distance tolerance").getFirst());
+
     parsed_params.max_speed = std::stod(params.at("max speed").getFirst());
     parsed_params.max_integral = std::stod(params.at("max integral").getFirst());
+    
+    parsed_params.max_angular_speed = std::stod(params.at("max angular speed").getFirst());
+    parsed_params.max_angular_integral = std::stod(params.at("max angular integral").getFirst());
+
     parsed_params.controler_period.fromSec(std::stod(params.at("controller period").getFirst()));
 
 
