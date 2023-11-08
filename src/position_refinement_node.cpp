@@ -9,8 +9,8 @@
 
 struct Params_t
 {
-    double gain_angular_P;
-    double gain_angular_I;
+    double angular_gain_P;
+    double angular_gain_I;
     double gain_P;
     double gain_I;
     double distance_tolerance;
@@ -20,6 +20,8 @@ struct Params_t
     double max_speed;
     double max_angular_speed;
     ros::Duration controler_period;
+    std::string reference_frame;
+    std::string command_topic;
 };
 
 
@@ -35,7 +37,7 @@ public:
                                                                                                  false)
     {
         tfListener_ = std::make_shared<tf2_ros::TransformListener>(tfBuffer_);
-        cmdVelPub_ = nh_.advertise<geometry_msgs::Twist>("/navigation/cmd_vel", 10, true);
+        cmdVelPub_ = nh_.advertise<geometry_msgs::Twist>(params_.command_topic, 10, true);
         position_refinement_ActionServer_.start();
         ROS_INFO_NAMED("position refinement node", "Ready");
 
@@ -47,10 +49,10 @@ public:
 
         navigation_position_refinement::position_refinementResult asResult;
         geometry_msgs::PoseStamped poseWanted = goal->goal;
-        if (!tfBuffer_.canTransform("base_footprint", poseWanted.header.frame_id, timeZero))
+        if (!tfBuffer_.canTransform(params_.reference_frame, poseWanted.header.frame_id, timeZero))
         {
             ROS_WARN_STREAM_NAMED("navigation position refinement",
-                                  "Can't transform frame '" << poseWanted.header.frame_id << "' in base_footprint  '"
+                                  "Can't transform frame '" << poseWanted.header.frame_id << "' in '" << params_.reference_frame
                                                             << "'. Aborting action.");
             asResult.error_code = asResult.NO_MAP_TO_OBJ_TRANSFORM;
             position_refinement_ActionServer_.setAborted(asResult);
@@ -93,14 +95,14 @@ public:
                                 std::min(params_.max_integral, integral + errors[0] * (now - lastControl).toSec()));
             cmd = std::max(-params_.max_speed,
                             std::min(params_.max_speed, params_.gain_P * errors[0] + params_.gain_I * integral));
-            auto val = tfBuffer_.transform(poseWanted, "base_footprint");
+            auto val = tfBuffer_.transform(poseWanted, params_.reference_frame);
             double angle = std::atan2(val.pose.position.y,val.pose.position.x);
             
             integral_angle = std::max(-params_.max_angular_integral,
                                 std::min(params_.max_angular_integral, integral_angle + errors[1] * (now - lastControl).toSec()));
             double angular_factor = 1;
             cmd_angle = std::max(-params_.max_angular_speed,
-                            std::min(params_.max_angular_speed, params_.gain_angular_P * errors[1] + params_.gain_angular_I * integral_angle));
+                            std::min(params_.max_angular_speed, params_.angular_gain_P * errors[1] + params_.angular_gain_I * integral_angle));
 
 
             if (errors[0] > params_.distance_tolerance)
@@ -146,7 +148,7 @@ public:
 
     std::vector<double> getErrors(const geometry_msgs::PoseStamped& poseWanted)
     {
-        auto val = tfBuffer_.transform(poseWanted, "base_footprint");
+        auto val = tfBuffer_.transform(poseWanted, params_.reference_frame);
         tf2::Quaternion q(val.pose.orientation.x, val.pose.orientation.y, val.pose.orientation.z,
                           val.pose.orientation.w);
         tf2::Vector3 v(val.pose.position.x, val.pose.position.y, val.pose.position.z);
@@ -180,17 +182,22 @@ int main(int argc, char** argv)
     params.insert(Parameter("gain P", {"-p", "--gain_p"}, {"0.1"}));
     params.insert(Parameter("gain I", {"-i", "--gain_i"}, {"0.05"}));
 
-    params.insert(Parameter("gain angulaire P", {"-ap", "--gain_angulaire_p"}, {"100"}));
-    params.insert(Parameter("gain angulaire I", {"-ai", "--gain_angulaire_i"}, {"1"}));
+    params.insert(Parameter("angular gain P", {"-ap", "--angular_gain_p"}, {"100"}));
+    params.insert(Parameter("angular gain I", {"-ai", "--angular_gain_i"}, {"1"}));
 
     params.insert(Parameter("angular tolerance", {"-a", "--angular_tolerance"}, {"0.034"}));
     params.insert(Parameter("distance tolerance", {"-d", "--distance_tolerance"}, {"0.2"}));
 
     params.insert(Parameter("max speed", {"-ms", "--max_speed"}, {"0.2"}));
     params.insert(Parameter("max angular speed", {"-as", "--angular_max_speed"}, {"0.1"}));
+
     params.insert(Parameter("max angular integral", {"-ami", "--angular_max_integral"}, {"5.0"}));
     params.insert(Parameter("max integral", {"-mi", "--max_integral"}, {"5.0"}));
+    
     params.insert(Parameter("controller period", {"-cp", "--controller_period"}, {"0.1"}));
+
+    params.insert(Parameter("reference frame", {"-f", "--reference_frame"}, {"base_footprint"}));
+    params.insert(Parameter("command topic", {"-t", "--command_topic"}, {"/cmd_vel"}));
 
     params.set(argc, argv);
     params.display();
@@ -199,8 +206,8 @@ int main(int argc, char** argv)
     parsed_params.gain_P = std::stod(params.at("gain P").getFirst());
     parsed_params.gain_I = std::stod(params.at("gain I").getFirst());
 
-    parsed_params.gain_angular_P = std::stod(params.at("gain angulaire P").getFirst());
-    parsed_params.gain_angular_P = std::stod(params.at("gain angulaire I").getFirst());
+    parsed_params.angular_gain_P = std::stod(params.at("angular gain P").getFirst());
+    parsed_params.angular_gain_I = std::stod(params.at("angular gain I").getFirst());
 
     parsed_params.angular_tolerance = std::stod(params.at("angular tolerance").getFirst());
     parsed_params.distance_tolerance = std::stod(params.at("distance tolerance").getFirst());
@@ -212,6 +219,9 @@ int main(int argc, char** argv)
     parsed_params.max_angular_integral = std::stod(params.at("max angular integral").getFirst());
 
     parsed_params.controler_period.fromSec(std::stod(params.at("controller period").getFirst()));
+    
+    parsed_params.reference_frame = params.at("reference frame").getFirst();
+    parsed_params.command_topic = params.at("command topic").getFirst();
 
 
     PositionRefinement position(n, parsed_params);
