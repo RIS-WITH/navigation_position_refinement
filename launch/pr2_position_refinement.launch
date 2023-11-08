@@ -1,0 +1,25 @@
+<launch>
+
+    <arg name="gain_p" default="0.1"/>
+    <arg name="gain_i" default="0.05"/>
+
+    <arg name="angular_gain_p" default="100"/>
+    <arg name="angular_gain_i" default="1"/>
+    
+    <arg name="angular_tolerance" default="0.034"/>
+    <arg name="distance_tolerance" default="0.2"/>
+    
+    <arg name="max_speed" default="0.2"/>
+    <arg name="angular_max_speed" default="0.1"/>
+    
+    <arg name="angular_max_integral" default="5.0"/>
+    <arg name="max_integral" default="5.0"/>
+    
+    <arg name="controller_period" default="0.1"/>
+    
+    <arg name="reference_frame" default="base_footprint"/>
+    <arg name="command_topic" default="/navigation/cmd_vel"/>
+
+    <node name="position_refinement" pkg="navigation_position_refinement" type="position_refinement" output="screen" args="-p $(arg gain_p) -i $(arg gain_i) -ap $(arg angular_gain_p) -ai $(arg angular_gain_i) -a $(arg angular_tolerance) -d $(arg distance_tolerance) -ms $(arg max_speed) -as $(arg angular_max_speed) -ami $(arg angular_max_integral) -mi $(arg max_integral) -cp $(arg controller_period) -f $(arg reference_frame) -t $(arg command_topic)"/>
+
+</launch>
