@@ -1,0 +1,17 @@
+
+float32 x_movement
+float32 y_movement
+float32 theta_rotation
+float32 linear_velocity
+float32 angular_velocity
+---
+int32 SUCCESS = 0
+int32 PREEMPTED = -1
+
+int32 error_code
+time action_end
+---
+float32 distance_x_to_goal
+float32 distance_y_to_goal
+float32 angular_to_goal
+time action_start

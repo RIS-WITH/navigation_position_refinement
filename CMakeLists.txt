@@ -67,7 +67,8 @@ find_package(catkin REQUIRED COMPONENTS
 add_action_files(
         DIRECTORY action
         FILES
-        position_refinement.action
+        PositionRefinement.action
+        BlindMovement.action
 )
 
 ## Generate added messages and services with any dependencies listed here
@@ -134,6 +135,12 @@ include_directories(
 add_executable(position_refinement src/position_refinement_node.cpp)
 add_dependencies(position_refinement ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
 target_link_libraries(position_refinement
+        ${catkin_LIBRARIES}
+)
+
+add_executable(blind_movement src/blind_movement.cpp)
+add_dependencies(blind_movement ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
+target_link_libraries(blind_movement
         ${catkin_LIBRARIES}
 )
 

@@ -1,0 +1,36 @@
+rostopic pub /position_refinement/goal navigation_position_refinement/position_refinementActionGoal "header:
+  seq: 0
+  stamp:
+    secs: 0
+    nsecs: 0
+  frame_id: ''
+goal_id:
+  stamp:
+    secs: 0
+    nsecs: 0
+  id: ''
+goal:
+  goal:
+    header:
+      seq: 0
+      stamp:
+        secs: 0
+        nsecs: 0
+      frame_id: ''
+    pose:
+      position:
+        x: 0.0
+        y: 0.0
+        z: 0.0
+      orientation:
+        x: 0.0
+        y: 0.0
+        z: 0.0
+        w: 0.0" 
+
+
+
+
+rosaction call /position_refinement ' {goal: {header: {frame_id:"nikon_front"},pose : { position: { x: 0, y: 0 }, orientation: { x: 0, y: 0, z: 0, w: 1 } }}}'
+
+rosaction call /blind_movement '{x_movement: 0.1 y_movement: 0, theta_rotation: 0, linear_velocity: 0.1 ,angular_velocity: 0}'

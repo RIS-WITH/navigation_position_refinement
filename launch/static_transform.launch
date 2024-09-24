@@ -1,0 +1,7 @@
+<?xml version="1.0"?>
+<launch>
+
+<node pkg="tf" type="static_transform_publisher" name="nikon" args="10 10 0 0 0 0 1 map nikon 10" />
+<node pkg="tf" type="static_transform_publisher" name="base_footprint" args="5 5 0 0 0 0 1 map base_footprint 10" />
+
+</launch>

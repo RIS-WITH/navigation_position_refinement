@@ -1,6 +1,6 @@
 #include <ros/ros.h>
 #include "navigation_position_refinement/Parameters.h"
-#include <navigation_position_refinement/position_refinementAction.h>
+#include <navigation_position_refinement/PositionRefinementAction.h>
 #include <string>
 #include <tf2_ros/transform_listener.h>
 #include <tf2/utils.h>
@@ -39,15 +39,15 @@ public:
         tfListener_ = std::make_shared<tf2_ros::TransformListener>(tfBuffer_);
         cmdVelPub_ = nh_.advertise<geometry_msgs::Twist>(params_.command_topic, 10, true);
         position_refinement_ActionServer_.start();
-        ROS_INFO_NAMED("position refinement node", "Ready");
+        ROS_INFO_NAMED("position refinement server", "Ready");
 
     }
 
-    void onNewGoal(const navigation_position_refinement::position_refinementGoalConstPtr& goal)
+    void onNewGoal(const navigation_position_refinement::PositionRefinementGoalConstPtr& goal)
     {
         ros::Time timeZero(0.0);
 
-        navigation_position_refinement::position_refinementResult asResult;
+        navigation_position_refinement::PositionRefinementResult asResult;
         geometry_msgs::PoseStamped poseWanted = goal->goal;
         if (!tfBuffer_.canTransform(params_.reference_frame, poseWanted.header.frame_id, timeZero))
         {
@@ -66,7 +66,7 @@ public:
         ros::Time actionStart = ros::Time::now();
         geometry_msgs::Twist cmdVel;
         integral = 0.0;
-        navigation_position_refinement::position_refinementFeedback feedback;
+        navigation_position_refinement::PositionRefinementFeedback feedback;
         feedback.action_start = actionStart;
         feedback.distance_to_goal = errors[0];
         feedback.angular_to_goal = errors[1];
@@ -166,7 +166,7 @@ private:
     Params_t params_;
     tf2_ros::Buffer tfBuffer_;
     std::shared_ptr<tf2_ros::TransformListener> tfListener_;
-    actionlib::SimpleActionServer<navigation_position_refinement::position_refinementAction> position_refinement_ActionServer_;
+    actionlib::SimpleActionServer<navigation_position_refinement::PositionRefinementAction> position_refinement_ActionServer_;
     ros::Publisher cmdVelPub_;
 
 };
