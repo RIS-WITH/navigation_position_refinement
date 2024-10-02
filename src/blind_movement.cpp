@@ -34,6 +34,7 @@ public:
 
   void onNewGoal(const navigation_position_refinement::BlindMovementGoalConstPtr goal)
   {
+    std::cout << "##### NEW GOAL #####" << std::endl;
     ros::Time timeZero(0.0);
 
     navigation_position_refinement::BlindMovementResult asResult;
@@ -41,8 +42,9 @@ public:
     // we will record transforms here
     tf2::Stamped<tf2::Transform> current_transform;
 
-    double roll, pitch, yaw;
-    bool goal_x, goal_y, goal_theta = false;
+    double roll_from_start, pitch_from_start, yaw_from_start;
+    bool goal_x = false, goal_y = false, goal_theta = false;
+    double integral_x = 0, integral_y = 0, integral_yaw = 0;
 
     // record the starting transform from the odometry to the base frame
     auto start_transform_msg = tfBuffer_.lookupTransform("base_footprint", "odom_combined",
@@ -50,15 +52,13 @@ public:
     tf2::fromMsg(start_transform_msg, start_transform_);
     // we will be sending commands of type "twist"
     geometry_msgs::Twist base_cmd;
-    // assign velocity sign
-    if (goal->y_movement != 0.)
-      base_cmd.linear.y = ((goal->y_movement > 0) ? 1. : -1.) * goal->linear_velocity;
-    if (goal->x_movement != 0.)
-      base_cmd.linear.x = ((goal->x_movement > 0) ? 1. : -1.) * goal->linear_velocity;
-    if (goal->theta_rotation != 0.)
-      base_cmd.angular.z = ((goal->theta_rotation > 0) ? 1. : -1.) * goal->angular_velocity;
+    base_cmd.linear.y = 0;
+    base_cmd.linear.x = 0;
+    base_cmd.angular.z = 0;
 
-    // distance = std::abs(distance);
+    ros::Time action_start_time = ros::Time::now();
+    ros::Time lastControl = ros::Time::now();
+    ros::Time now = lastControl;
 
     bool done = false;
     while (!done && nh_.ok())
@@ -66,6 +66,9 @@ public:
       // send the drive command
       cmdVelPub_.publish(base_cmd);
       params_.controler_period.sleep();
+
+      now = ros::Time::now();
+
       // get the current transform
       try
       {
@@ -81,43 +84,44 @@ public:
       // see how far we've traveled
 
       tf2::Transform relative_transform = current_transform.inverse() * start_transform_;
-      auto vec_error = relative_transform.getOrigin();
-      std::cout << "val : x:" << vec_error[0] << " y:" << vec_error[1] << std::endl;
-      relative_transform.getBasis().getRPY(roll, pitch, yaw);
+      auto pose_from_start = relative_transform.getOrigin();
+      relative_transform.getBasis().getRPY(roll_from_start, pitch_from_start, yaw_from_start);
 
-      if (abs(vec_error[0]) > abs(goal->x_movement))
-      {
-        if (not goal_x)
-          std::cout << "distance x ok " << std::endl;
-        base_cmd.linear.x = 0;
-        goal_x = true;
-      }
-      if (abs(vec_error[1]) > abs(goal->y_movement))
-      {
-        if (not goal_y)
-          std::cout << "distance y ok " << std::endl;
-        base_cmd.linear.y = 0;
-        goal_y = true;
-      }
-      if (abs(yaw) > abs(goal->theta_rotation))
-      {
-        if (not goal_theta)
-          std::cout << "distance theta ok " << std::endl;
-        base_cmd.angular.z = 0;
-        goal_theta = true;
-      }
+      double error_x = goal->x_movement - pose_from_start[0];
+      double error_y = goal->y_movement - pose_from_start[1];
+      double error_yaw = goal->theta_rotation - yaw_from_start;
 
-      ros::Time lastControl = ros::Time::now();
-      ros::Time now = lastControl;
-      ros::Time actionStart = ros::Time::now();
+      double max_integral_lin = 1.0;
+      double max_integral_ang = 3.0;
+      integral_x = std::max(-max_integral_lin, std::min(max_integral_lin, integral_x + error_x * (now - lastControl).toSec()));
+      integral_y = std::max(-max_integral_lin, std::min(max_integral_lin, integral_y + error_y * (now - lastControl).toSec()));
+      integral_yaw = std::max(-max_integral_ang, std::min(max_integral_ang, integral_yaw + error_yaw * (now - lastControl).toSec()));
+
+      std::cout << "error x: " << error_x << " | error y: " << error_y << " | error yaw " << error_yaw << std::endl;
+      std::cout << "integ x: " << integral_x << " | integ y: " << integral_y << " | integ yaw " << integral_yaw << std::endl;
+
+      double P_lin = 1.45;
+      double P_ang = 0.9;
+      double I_lin = 0.0; // 2;
+      double I_ang = 0.05;
+      base_cmd.linear.x = std::max(-(double)goal->linear_velocity, std::min((double)goal->linear_velocity, P_lin * error_x + I_lin * integral_x));
+      base_cmd.linear.y = std::max(-(double)goal->linear_velocity, std::min((double)goal->linear_velocity, P_lin * error_y + I_lin * integral_y));
+      base_cmd.angular.z = std::max(-(double)goal->angular_velocity, std::min((double)goal->angular_velocity, P_ang * error_yaw + I_ang * integral_yaw));
+      std::cout << "cmd = x: " << base_cmd.linear.x << " y: " << base_cmd.linear.y << " yaw: " << base_cmd.angular.z << std::endl;
+
+      goal_x = (std::abs(error_x) < 0.015);
+      goal_y = (std::abs(error_y) < 0.015);
+      goal_theta = (std::abs(error_yaw) < 2 * M_PI / 180.);
+
+      lastControl = now;
 
       navigation_position_refinement::BlindMovementFeedback feedback;
-      feedback.action_start = actionStart;
-      feedback.distance_x_to_goal = vec_error[0];
-      feedback.distance_y_to_goal = vec_error[1];
-      feedback.angular_to_goal = vec_error[2];
+      feedback.action_start = action_start_time;
+      feedback.distance_x_to_goal = pose_from_start[0];
+      feedback.distance_y_to_goal = pose_from_start[1];
+      feedback.angular_to_goal = yaw_from_start;
       blind_movement_action_server_.publishFeedback(feedback);
-      if (goal_theta and goal_x and goal_y)
+      if (goal_theta && goal_x && goal_y)
         done = true;
     }
 
