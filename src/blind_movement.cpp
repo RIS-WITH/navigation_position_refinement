@@ -5,6 +5,7 @@
 #include <string>
 #include <tf2_ros/transform_listener.h>
 #include <tf2/utils.h>
+#include <tf2_ros/transform_broadcaster.h>
 #include <geometry_msgs/Twist.h>
 #include <actionlib/server/simple_action_server.h>
 
@@ -29,6 +30,7 @@ public:
     tfListener_ = std::make_shared<tf2_ros::TransformListener>(tfBuffer_);
     cmdVelPub_ = nh_.advertise<geometry_msgs::Twist>(params_.command_topic, 10, true);
     blind_movement_action_server_.start();
+    // tfBroadcaster_ = std::make_shared<tf::TransformBroadcaster>
     ROS_INFO_NAMED("move blind server", "Ready");
   }
 
@@ -47,7 +49,7 @@ public:
     double integral_x = 0, integral_y = 0, integral_yaw = 0;
 
     // record the starting transform from the odometry to the base frame
-    auto start_transform_msg = tfBuffer_.lookupTransform("base_footprint", "odom_combined",
+    auto start_transform_msg = tfBuffer_.lookupTransform("odom_combined", "base_footprint",
                                                          ros::Time(0), ros::Duration(1.0));
     tf2::fromMsg(start_transform_msg, start_transform_);
     // we will be sending commands of type "twist"
@@ -72,7 +74,7 @@ public:
       // get the current transform
       try
       {
-        auto current_transform_msg = tfBuffer_.lookupTransform("base_footprint", "odom_combined",
+        auto current_transform_msg = tfBuffer_.lookupTransform("odom_combined", "base_footprint",
                                                                ros::Time(0), ros::Duration(1.0));
         tf2::fromMsg(current_transform_msg, current_transform);
       }
@@ -85,11 +87,12 @@ public:
 
       tf2::Transform relative_transform = current_transform.inverse() * start_transform_;
       auto pose_from_start = relative_transform.getOrigin();
+      std::cout << "### " << -pose_from_start[0] << " : " << -pose_from_start[1] << " : " << -pose_from_start[2] << std::endl;
       relative_transform.getBasis().getRPY(roll_from_start, pitch_from_start, yaw_from_start);
 
-      double error_x = goal->x_movement - pose_from_start[0];
-      double error_y = goal->y_movement - pose_from_start[1];
-      double error_yaw = goal->theta_rotation - yaw_from_start;
+      double error_x = goal->x_movement + pose_from_start[0];
+      double error_y = goal->y_movement + pose_from_start[1];
+      double error_yaw = goal->theta_rotation + yaw_from_start;
 
       double max_integral_lin = 1.0;
       double max_integral_ang = 3.0;
@@ -109,17 +112,17 @@ public:
       base_cmd.angular.z = std::max(-(double)goal->angular_velocity, std::min((double)goal->angular_velocity, P_ang * error_yaw + I_ang * integral_yaw));
       std::cout << "cmd = x: " << base_cmd.linear.x << " y: " << base_cmd.linear.y << " yaw: " << base_cmd.angular.z << std::endl;
 
-      goal_x = (std::abs(error_x) < 0.015);
-      goal_y = (std::abs(error_y) < 0.015);
-      goal_theta = (std::abs(error_yaw) < 2 * M_PI / 180.);
+      goal_x = (std::abs(error_x) < 0.007) || (goal->linear_velocity == 0);
+      goal_y = (std::abs(error_y) < 0.007) || (goal->linear_velocity == 0);
+      goal_theta = (std::abs(error_yaw) < 0.5 * M_PI / 180.) || (goal->angular_velocity == 0);
 
       lastControl = now;
 
       navigation_position_refinement::BlindMovementFeedback feedback;
       feedback.action_start = action_start_time;
-      feedback.distance_x_to_goal = pose_from_start[0];
-      feedback.distance_y_to_goal = pose_from_start[1];
-      feedback.angular_to_goal = yaw_from_start;
+      feedback.distance_x_to_goal = -pose_from_start[0];
+      feedback.distance_y_to_goal = -pose_from_start[1];
+      feedback.angular_to_goal = -yaw_from_start;
       blind_movement_action_server_.publishFeedback(feedback);
       if (goal_theta && goal_x && goal_y)
         done = true;
@@ -139,6 +142,7 @@ private:
   BlindParams_t params_;
   tf2_ros::Buffer tfBuffer_;
   std::shared_ptr<tf2_ros::TransformListener> tfListener_;
+  // std::shared_ptr<tf_ros::TransformBroadcaster> tfBroadcaster_;
   actionlib::SimpleActionServer<navigation_position_refinement::BlindMovementAction> blind_movement_action_server_;
   ros::Publisher cmdVelPub_;
   tf2::Stamped<tf2::Transform> start_transform_;
